@@ -13,7 +13,13 @@ const CSRF_SECRET_COOKIE = 'csrfSecret';
 const NEXT_ACTION_HEADER = 'next-action';
 
 export const config = {
-  matcher: ['/((?!_next/static|_next/image|images|locales|assets|api/*).*)'],
+  /**
+   * ✅ Exclude Next internals, static assets, and API routes.
+   * NOTE: this is a regex string; avoid globs like api/*
+   */
+  matcher: [
+    '/((?!_next/static|_next/image|images|locales|assets|api(?:/.*)?).*)',
+  ],
 };
 
 const getUser = (request: NextRequest, response: NextResponse) => {
@@ -40,6 +46,12 @@ export async function middleware(request: NextRequest) {
 
   // apply CSRF protection for mutating requests
   const csrfResponse = await withCsrfMiddleware(request, baseResponse);
+
+  // ✅ also echo correlation id back to the response for easier tracing
+  const cid = requestHeaders.get('x-correlation-id');
+  if (cid && !csrfResponse.headers.has('x-correlation-id')) {
+    csrfResponse.headers.set('x-correlation-id', cid);
+  }
 
   // handle patterns for specific routes
   const handlePattern = matchUrlPattern(request.url);
@@ -68,11 +80,15 @@ async function withCsrfMiddleware(
     cookie: {
       secure: appConfig.production,
       name: CSRF_SECRET_COOKIE,
+      httpOnly: true,
+      sameSite: 'lax',
+      path: '/',
     },
-    // ignore CSRF errors for server actions since protection is built-in
-    ignoreMethods: isServerAction(request)
-      ? ['POST']
-      : ['GET', 'HEAD', 'OPTIONS'],
+    /**
+     * ✅ Ignore CSRF errors for server actions since protection is built-in
+     * Server Actions are POST with `next-action` header.
+     */
+    ignoreMethods: isServerAction(request) ? ['POST'] : ['GET', 'HEAD', 'OPTIONS'],
   });
 
   try {
@@ -80,16 +96,58 @@ async function withCsrfMiddleware(
     return response;
   } catch (error) {
     if (error instanceof CsrfError) {
-      // ✅ CSRF 语义更合适是 403
-      return NextResponse.json('Invalid CSRF token', { status: 403 });
+      return handleCsrfFailure(request);
     }
-
     throw error;
   }
 }
 
+function handleCsrfFailure(request: NextRequest) {
+  const accept = request.headers.get('accept') ?? '';
+  const isPageNavigation =
+    accept.includes('text/html') || request.headers.get('sec-fetch-dest') === 'document';
+
+  // ✅ Better UX for page navigations; keep JSON for API-ish calls
+  if (isPageNavigation) {
+    // You can change this path to your own CSRF error page if you have one.
+    const url = new URL(pathsConfig.auth.signIn, request.nextUrl.origin);
+    // Optional: carry next so user can return after re-auth
+    url.searchParams.set('next', request.nextUrl.pathname);
+    url.searchParams.set('error', 'csrf');
+    return NextResponse.redirect(url.href);
+  }
+
+  return NextResponse.json({ error: 'Invalid CSRF token' }, { status: 403 });
+}
+
 function isServerAction(request: NextRequest) {
   return request.headers.has(NEXT_ACTION_HEADER);
+}
+
+/**
+ * Redirect helper that preserves important headers/cookies
+ * from a previous response (e.g. CSRF / Supabase session refresh).
+ */
+function redirectWithPreservedHeaders(
+  from: NextResponse,
+  to: string,
+  status?: 301 | 302 | 303 | 307 | 308,
+) {
+  const r = NextResponse.redirect(to, status);
+
+  // Preserve Set-Cookie (critical for auth/session + csrf)
+  const setCookie = from.headers.get('set-cookie');
+  if (setCookie) {
+    // If you expect multiple Set-Cookie, Next usually concatenates,
+    // but this still preserves the header content emitted upstream.
+    r.headers.set('set-cookie', setCookie);
+  }
+
+  // Preserve correlation id for tracing
+  const cid = from.headers.get('x-correlation-id');
+  if (cid) r.headers.set('x-correlation-id', cid);
+
+  return r;
 }
 
 /**
@@ -109,9 +167,8 @@ function getPatterns() {
 
         // logged in and not verifying MFA → redirect to home
         if (!isVerifyMfa) {
-          return NextResponse.redirect(
-            new URL(pathsConfig.app.home, req.nextUrl.origin).href,
-          );
+          const to = new URL(pathsConfig.app.home, req.nextUrl.origin).href;
+          return redirectWithPreservedHeaders(res, to);
         }
       },
     },
@@ -126,17 +183,17 @@ function getPatterns() {
         // not logged in → redirect to sign in with next
         if (!data?.claims) {
           const signIn = pathsConfig.auth.signIn;
-          const redirectPath = `${signIn}?next=${next}`;
-          return NextResponse.redirect(new URL(redirectPath, origin).href);
+          const redirectPath = `${signIn}?next=${encodeURIComponent(next)}`;
+          const to = new URL(redirectPath, origin).href;
+          return redirectWithPreservedHeaders(res, to);
         }
 
         const supabase = createMiddlewareClient(req, res);
         const requiresMfa = await checkRequiresMultiFactorAuthentication(supabase);
 
         if (requiresMfa) {
-          return NextResponse.redirect(
-            new URL(pathsConfig.auth.verifyMfa, origin).href,
-          );
+          const to = new URL(pathsConfig.auth.verifyMfa, origin).href;
+          return redirectWithPreservedHeaders(res, to);
         }
       },
     },
