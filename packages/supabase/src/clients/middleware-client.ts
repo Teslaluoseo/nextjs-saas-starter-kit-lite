@@ -13,18 +13,6 @@ import { getSupabaseClientKeys } from '../get-supabase-client-keys';
  * @param {NextRequest} request - The Next.js request object.
  * @param {NextResponse} response - The Next.js response object.
  */
-import { clerkMiddleware } from "@clerk/nextjs/server";
-
-export default clerkMiddleware();
-
-export const config = {
-  matcher: [
-    // 跳过 Next.js 内部文件和静态资源
-    "/((?!_next|.*\\..*).*)",
-    // 也保护 API 路由
-    "/(api|trpc)(.*)",
-  ],
-};
 
 export function createMiddlewareClient<GenericSchema = Database>(
   request: NextRequest,
