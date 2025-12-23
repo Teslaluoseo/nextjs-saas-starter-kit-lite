@@ -18,41 +18,45 @@ export const config = {
 
 const getUser = (request: NextRequest, response: NextResponse) => {
   const supabase = createMiddlewareClient(request, response);
-
   return supabase.auth.getClaims();
 };
 
 export async function middleware(request: NextRequest) {
-  const response = NextResponse.next();
+  /**
+   * ✅ Next.js middleware 里 request.headers 是只读的
+   * ✅ 正确方式：clone headers → set → NextResponse.next({ request: { headers } })
+   */
+  const requestHeaders = new Headers(request.headers);
 
-  // set a unique request ID for each request
-  // this helps us log and trace requests
-  setRequestId(request);
+  // set a unique request ID for each request (for tracing)
+  setRequestId(requestHeaders);
+
+  // build a base response that includes the mutated request headers
+  const baseResponse = NextResponse.next({
+    request: {
+      headers: requestHeaders,
+    },
+  });
 
   // apply CSRF protection for mutating requests
-  const csrfResponse = await withCsrfMiddleware(request, response);
+  const csrfResponse = await withCsrfMiddleware(request, baseResponse);
 
   // handle patterns for specific routes
   const handlePattern = matchUrlPattern(request.url);
 
-  // if a pattern handler exists, call it
   if (handlePattern) {
     const patternHandlerResponse = await handlePattern(request, csrfResponse);
 
-    // if a pattern handler returns a response, return it
     if (patternHandlerResponse) {
       return patternHandlerResponse;
     }
   }
 
-  // append the action path to the request headers
-  // which is useful for knowing the action path in server actions
+  // If server action, append action path to response headers
   if (isServerAction(request)) {
     csrfResponse.headers.set('x-action-path', request.nextUrl.pathname);
   }
 
-  // if no pattern handler returned a response,
-  // return the session response
   return csrfResponse;
 }
 
@@ -60,7 +64,6 @@ async function withCsrfMiddleware(
   request: NextRequest,
   response = new NextResponse(),
 ) {
-  // set up CSRF protection
   const csrfProtect = createCsrfProtect({
     cookie: {
       secure: appConfig.production,
@@ -69,20 +72,16 @@ async function withCsrfMiddleware(
     // ignore CSRF errors for server actions since protection is built-in
     ignoreMethods: isServerAction(request)
       ? ['POST']
-      : // always ignore GET, HEAD, and OPTIONS requests
-        ['GET', 'HEAD', 'OPTIONS'],
+      : ['GET', 'HEAD', 'OPTIONS'],
   });
 
   try {
     await csrfProtect(request, response);
-
     return response;
   } catch (error) {
-    // if there is a CSRF error, return a 403 response
     if (error instanceof CsrfError) {
-      return NextResponse.json('Invalid CSRF token', {
-        status: 401,
-      });
+      // ✅ CSRF 语义更合适是 403
+      return NextResponse.json('Invalid CSRF token', { status: 403 });
     }
 
     throw error;
@@ -90,10 +89,9 @@ async function withCsrfMiddleware(
 }
 
 function isServerAction(request: NextRequest) {
-  const headers = new Headers(request.headers);
-
-  return headers.has(NEXT_ACTION_HEADER);
+  return request.headers.has(NEXT_ACTION_HEADER);
 }
+
 /**
  * Define URL patterns and their corresponding handlers.
  */
@@ -104,16 +102,12 @@ function getPatterns() {
       handler: async (req: NextRequest, res: NextResponse) => {
         const { data } = await getUser(req, res);
 
-        // the user is logged out, so we don't need to do anything
-        if (!data?.claims) {
-          return;
-        }
+        // user logged out → no action
+        if (!data?.claims) return;
 
-        // check if we need to verify MFA (user is authenticated but needs to verify MFA)
         const isVerifyMfa = req.nextUrl.pathname === pathsConfig.auth.verifyMfa;
 
-        // If user is logged in and does not need to verify MFA,
-        // redirect to home page.
+        // logged in and not verifying MFA → redirect to home
         if (!isVerifyMfa) {
           return NextResponse.redirect(
             new URL(pathsConfig.app.home, req.nextUrl.origin).href,
@@ -129,21 +123,17 @@ function getPatterns() {
         const origin = req.nextUrl.origin;
         const next = req.nextUrl.pathname;
 
-        // If user is not logged in, redirect to sign in page.
+        // not logged in → redirect to sign in with next
         if (!data?.claims) {
           const signIn = pathsConfig.auth.signIn;
           const redirectPath = `${signIn}?next=${next}`;
-
           return NextResponse.redirect(new URL(redirectPath, origin).href);
         }
 
         const supabase = createMiddlewareClient(req, res);
+        const requiresMfa = await checkRequiresMultiFactorAuthentication(supabase);
 
-        const requiresMultiFactorAuthentication =
-          await checkRequiresMultiFactorAuthentication(supabase);
-
-        // If user requires multi-factor authentication, redirect to MFA page.
-        if (requiresMultiFactorAuthentication) {
+        if (requiresMfa) {
           return NextResponse.redirect(
             new URL(pathsConfig.auth.verifyMfa, origin).href,
           );
@@ -155,7 +145,6 @@ function getPatterns() {
 
 /**
  * Match URL patterns to specific handlers.
- * @param url
  */
 function matchUrlPattern(url: string) {
   const patterns = getPatterns();
@@ -172,8 +161,11 @@ function matchUrlPattern(url: string) {
 
 /**
  * Set a unique request ID for each request.
- * @param request
+ * ✅ must mutate cloned headers, not request.headers directly
  */
-function setRequestId(request: Request) {
-  request.headers.set('x-correlation-id', crypto.randomUUID());
+function setRequestId(headers: Headers) {
+  // avoid overriding if upstream already provided
+  if (!headers.has('x-correlation-id')) {
+    headers.set('x-correlation-id', crypto.randomUUID());
+  }
 }
