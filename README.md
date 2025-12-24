@@ -341,3 +341,4 @@ This project is licensed under the MIT License. See the [LICENSE](LICENSE) file 
 No support is provided for this kit. Feel free to open an issue if you have any questions or need help, but there is no guaranteed response time, nor guarantee a fix.
 
 For dedicated support, priority fixes, and advanced features, [check out our full version](https://makerkit.dev).
+
