@@ -1,4 +1,21 @@
-import { NextResponse } from 'next/server';
+import { NextRequest, NextResponse } from 'next/server';
+
+// ✅ 强制走 Node.js（不要 Edge）
+export const runtime = 'nodejs';
+
+// ✅ 防止被静态优化/缓存导致 env 读取异常
+export const dynamic = 'force-dynamic';
+
+/**
+ * ✅ 用来验证：Vercel 运行时能不能读到 API_BASE_URL
+ * 访问：/api/seo/jobs
+ */
+export async function GET() {
+  return NextResponse.json({
+    ok: true,
+    API_BASE_URL: process.env.API_BASE_URL ?? null,
+  });
+}
 
 const API_BASE_URL = process.env.API_BASE_URL;
 
