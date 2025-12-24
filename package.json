@@ -36,7 +36,10 @@
   "pnpm": {
     "overrides": {
       "react-is": "19.0.0"
-    }
+    },
+    "ignoredBuiltDependencies": [
+      "core-js-pure"
+    ]
   },
   "devDependencies": {
     "@manypkg/cli": "^0.25.1",
