@@ -2,76 +2,50 @@
 
 import Link from 'next/link';
 
-import { ArrowLeft, MessageCircle } from 'lucide-react';
-
-import { Button } from '@kit/ui/button';
-import { Heading } from '@kit/ui/heading';
-import { Trans } from '@kit/ui/trans';
-
-import { SiteHeader } from '~/(marketing)/_components/site-header';
-
-const ErrorPage = ({
+export default function GlobalError({
   error,
   reset,
 }: {
   error: Error & { digest?: string };
   reset: () => void;
-}) => {
-  console.error(error);
-
+}) {
   return (
-    <div className={'flex h-screen flex-1 flex-col'}>
-      <SiteHeader />
+    <div style={{ minHeight: '100vh', padding: 40 }}>
+      <h1 style={{ fontSize: 40, marginBottom: 12 }}>Something went wrong</h1>
 
-      <div
-        className={
-          'container m-auto flex w-full flex-1 flex-col items-center justify-center'
-        }
+      <p style={{ marginBottom: 12 }}>
+        Please try again. If the problem persists, contact support.
+      </p>
+
+      <pre
+        style={{
+          whiteSpace: 'pre-wrap',
+          background: '#f5f5f5',
+          padding: 12,
+          borderRadius: 8,
+          marginBottom: 16,
+        }}
       >
-        <div className={'flex flex-col items-center space-y-8'}>
-          <div>
-            <h1 className={'font-heading text-9xl font-semibold'}>
-              <Trans i18nKey={'common:errorPageHeading'} />
-            </h1>
-          </div>
+        {error?.message ?? 'Unknown error'}
+      </pre>
 
-          <div className={'flex flex-col items-center space-y-8'}>
-            <div
-              className={
-                'flex max-w-xl flex-col items-center space-y-1 text-center'
-              }
-            >
-              <div>
-                <Heading level={2}>
-                  <Trans i18nKey={'common:genericError'} />
-                </Heading>
-              </div>
+      <div style={{ display: 'flex', gap: 12 }}>
+        <button
+          onClick={() => reset()}
+          style={{
+            padding: '10px 14px',
+            borderRadius: 8,
+            border: '1px solid #ccc',
+            cursor: 'pointer',
+          }}
+        >
+          Try again
+        </button>
 
-              <p className={'text-muted-foreground text-lg'}>
-                <Trans i18nKey={'common:genericErrorSubHeading'} />
-              </p>
-            </div>
-
-            <div className={'flex space-x-4'}>
-              <Button className={'w-full'} variant={'default'} onClick={reset}>
-                <ArrowLeft className={'mr-2 h-4'} />
-
-                <Trans i18nKey={'common:goBack'} />
-              </Button>
-
-              <Button className={'w-full'} variant={'outline'} asChild>
-                <Link href={'/contact'}>
-                  <MessageCircle className={'mr-2 h-4'} />
-
-                  <Trans i18nKey={'common:contactUs'} />
-                </Link>
-              </Button>
-            </div>
-          </div>
-        </div>
+        <Link href="/" style={{ padding: '10px 14px', textDecoration: 'underline' }}>
+          Home
+        </Link>
       </div>
     </div>
   );
-};
-
-export default ErrorPage;
+}
