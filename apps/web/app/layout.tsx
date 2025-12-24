@@ -8,6 +8,8 @@ import { heading, sans } from '~/lib/fonts';
 import { createI18nServerInstance } from '~/lib/i18n/i18n.server';
 import { generateRootMetadata } from '~/lib/root-metdata';
 
+import { AppClerkProvider } from './clerk-provider';
+
 import '../styles/globals.css';
 
 export default async function RootLayout({
@@ -20,13 +22,15 @@ export default async function RootLayout({
   const className = getClassName(theme);
 
   return (
-    <html lang={language} className={className}>
+    <html lang={language} className={className} suppressHydrationWarning>
       <body>
-        <RootProviders theme={theme} lang={language}>
-          {children}
-        </RootProviders>
+        <AppClerkProvider>
+          <RootProviders theme={theme} lang={language}>
+            {children}
+          </RootProviders>
 
-        <Toaster richColors={true} theme={theme} position="top-center" />
+          <Toaster richColors={true} theme={theme} position="top-center" />
+        </AppClerkProvider>
       </body>
     </html>
   );
@@ -39,7 +43,6 @@ function getClassName(theme?: string) {
   const font = [sans.variable, heading.variable].reduce<string[]>(
     (acc, curr) => {
       if (acc.includes(curr)) return acc;
-
       return [...acc, curr];
     },
     [],
@@ -53,6 +56,7 @@ function getClassName(theme?: string) {
 
 async function getTheme() {
   const cookiesStore = await cookies();
+
   return cookiesStore.get('theme')?.value as 'light' | 'dark' | 'system';
 }
 
