@@ -2,9 +2,7 @@ import type { NextRequest } from 'next/server';
 import { NextResponse, URLPattern } from 'next/server';
 
 import { CsrfError, createCsrfProtect } from '@edge-csrf/nextjs';
-
-import { checkRequiresMultiFactorAuthentication } from '@kit/supabase/check-requires-mfa';
-import { createMiddlewareClient } from '@kit/supabase/middleware-client';
+import { getAuth } from '@clerk/nextjs/server';
 
 import appConfig from '~/config/app.config';
 import pathsConfig from '~/config/paths.config';
@@ -20,11 +18,6 @@ export const config = {
   matcher: [
     '/((?!_next/static|_next/image|images|locales|assets|api(?:/.*)?).*)',
   ],
-};
-
-const getUser = (request: NextRequest, response: NextResponse) => {
-  const supabase = createMiddlewareClient(request, response);
-  return supabase.auth.getClaims();
 };
 
 export async function middleware(request: NextRequest) {
@@ -88,7 +81,9 @@ async function withCsrfMiddleware(
      * ✅ Ignore CSRF errors for server actions since protection is built-in
      * Server Actions are POST with `next-action` header.
      */
-    ignoreMethods: isServerAction(request) ? ['POST'] : ['GET', 'HEAD', 'OPTIONS'],
+    ignoreMethods: isServerAction(request)
+      ? ['POST']
+      : ['GET', 'HEAD', 'OPTIONS'],
   });
 
   try {
@@ -105,13 +100,12 @@ async function withCsrfMiddleware(
 function handleCsrfFailure(request: NextRequest) {
   const accept = request.headers.get('accept') ?? '';
   const isPageNavigation =
-    accept.includes('text/html') || request.headers.get('sec-fetch-dest') === 'document';
+    accept.includes('text/html') ||
+    request.headers.get('sec-fetch-dest') === 'document';
 
   // ✅ Better UX for page navigations; keep JSON for API-ish calls
   if (isPageNavigation) {
-    // You can change this path to your own CSRF error page if you have one.
     const url = new URL(pathsConfig.auth.signIn, request.nextUrl.origin);
-    // Optional: carry next so user can return after re-auth
     url.searchParams.set('next', request.nextUrl.pathname);
     url.searchParams.set('error', 'csrf');
     return NextResponse.redirect(url.href);
@@ -126,7 +120,7 @@ function isServerAction(request: NextRequest) {
 
 /**
  * Redirect helper that preserves important headers/cookies
- * from a previous response (e.g. CSRF / Supabase session refresh).
+ * from a previous response (e.g. CSRF cookie).
  */
 function redirectWithPreservedHeaders(
   from: NextResponse,
@@ -135,11 +129,9 @@ function redirectWithPreservedHeaders(
 ) {
   const r = NextResponse.redirect(to, status);
 
-  // Preserve Set-Cookie (critical for auth/session + csrf)
+  // Preserve Set-Cookie (critical for csrf)
   const setCookie = from.headers.get('set-cookie');
   if (setCookie) {
-    // If you expect multiple Set-Cookie, Next usually concatenates,
-    // but this still preserves the header content emitted upstream.
     r.headers.set('set-cookie', setCookie);
   }
 
@@ -151,6 +143,14 @@ function redirectWithPreservedHeaders(
 }
 
 /**
+ * Clerk auth check (Edge-safe)
+ */
+function isLoggedIn(req: NextRequest) {
+  const { userId } = getAuth(req);
+  return Boolean(userId);
+}
+
+/**
  * Define URL patterns and their corresponding handlers.
  */
 function getPatterns() {
@@ -158,15 +158,8 @@ function getPatterns() {
     {
       pattern: new URLPattern({ pathname: '/auth/*?' }),
       handler: async (req: NextRequest, res: NextResponse) => {
-        const { data } = await getUser(req, res);
-
-        // user logged out → no action
-        if (!data?.claims) return;
-
-        const isVerifyMfa = req.nextUrl.pathname === pathsConfig.auth.verifyMfa;
-
-        // logged in and not verifying MFA → redirect to home
-        if (!isVerifyMfa) {
+        // ✅ 已登录就别进登录/注册页了，直接回到 /home
+        if (isLoggedIn(req)) {
           const to = new URL(pathsConfig.app.home, req.nextUrl.origin).href;
           return redirectWithPreservedHeaders(res, to);
         }
@@ -175,24 +168,14 @@ function getPatterns() {
     {
       pattern: new URLPattern({ pathname: '/home/*?' }),
       handler: async (req: NextRequest, res: NextResponse) => {
-        const { data } = await getUser(req, res);
-
         const origin = req.nextUrl.origin;
         const next = req.nextUrl.pathname;
 
-        // not logged in → redirect to sign in with next
-        if (!data?.claims) {
+        // ✅ 未登录 → 去登录页
+        if (!isLoggedIn(req)) {
           const signIn = pathsConfig.auth.signIn;
           const redirectPath = `${signIn}?next=${encodeURIComponent(next)}`;
           const to = new URL(redirectPath, origin).href;
-          return redirectWithPreservedHeaders(res, to);
-        }
-
-        const supabase = createMiddlewareClient(req, res);
-        const requiresMfa = await checkRequiresMultiFactorAuthentication(supabase);
-
-        if (requiresMfa) {
-          const to = new URL(pathsConfig.auth.verifyMfa, origin).href;
           return redirectWithPreservedHeaders(res, to);
         }
       },
@@ -221,7 +204,6 @@ function matchUrlPattern(url: string) {
  * ✅ must mutate cloned headers, not request.headers directly
  */
 function setRequestId(headers: Headers) {
-  // avoid overriding if upstream already provided
   if (!headers.has('x-correlation-id')) {
     headers.set('x-correlation-id', crypto.randomUUID());
   }
