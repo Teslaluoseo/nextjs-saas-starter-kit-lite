@@ -1,103 +1,23 @@
 'use client';
 
 import Link from 'next/link';
+import { Menu, Sparkles } from 'lucide-react';
 
-import { LogOut, Menu } from 'lucide-react';
+import { Button } from '@kit/ui/button';
 
-import { useSignOut } from '@kit/supabase/hooks/use-sign-out';
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuGroup,
-  DropdownMenuItem,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger,
-} from '@kit/ui/dropdown-menu';
-import { Trans } from '@kit/ui/trans';
-
-import { navigationConfig } from '~/config/navigation.config';
-
-/**
- * Mobile navigation for the home page
- * @constructor
- */
 export function HomeMobileNavigation() {
-  const signOut = useSignOut();
-
-  const Links = navigationConfig.routes.map((item, index) => {
-    if ('children' in item) {
-      return item.children.map((child) => {
-        return (
-          <DropdownLink
-            key={child.path}
-            Icon={child.Icon}
-            path={child.path}
-            label={child.label}
-          />
-        );
-      });
-    }
-
-    if ('divider' in item) {
-      return <DropdownMenuSeparator key={index} />;
-    }
-  });
-
   return (
-    <DropdownMenu>
-      <DropdownMenuTrigger>
-        <Menu className={'h-9'} />
-      </DropdownMenuTrigger>
-
-      <DropdownMenuContent sideOffset={10} className={'w-screen rounded-none'}>
-        <DropdownMenuGroup>{Links}</DropdownMenuGroup>
-
-        <DropdownMenuSeparator />
-
-        <SignOutDropdownItem onSignOut={() => signOut.mutateAsync()} />
-      </DropdownMenuContent>
-    </DropdownMenu>
-  );
-}
-
-function DropdownLink(
-  props: React.PropsWithChildren<{
-    path: string;
-    label: string;
-    Icon: React.ReactNode;
-  }>,
-) {
-  return (
-    <DropdownMenuItem asChild key={props.path}>
-      <Link
-        href={props.path}
-        className={'flex h-12 w-full items-center space-x-4'}
-      >
-        {props.Icon}
-
-        <span>
-          <Trans i18nKey={props.label} defaults={props.label} />
-        </span>
+    <div className="flex items-center gap-2">
+      <Link href="/home/create">
+        <Button className="rounded-xl bg-gradient-to-r from-violet-500 to-sky-400 text-black hover:opacity-95">
+          <Sparkles className="mr-2 h-4 w-4" />
+          Create
+        </Button>
       </Link>
-    </DropdownMenuItem>
-  );
-}
 
-function SignOutDropdownItem(
-  props: React.PropsWithChildren<{
-    onSignOut: () => unknown;
-  }>,
-) {
-  return (
-    <DropdownMenuItem
-      className={'flex h-12 w-full items-center space-x-4'}
-      onClick={props.onSignOut}
-    >
-      <LogOut className={'h-6'} />
-
-      <span>
-        <Trans i18nKey={'common:signOut'} defaults={'Sign out'} />
-      </span>
-    </DropdownMenuItem>
+      <Button variant="outline" size="icon" className="rounded-xl border-white/10 bg-white/[0.03] hover:bg-white/6">
+        <Menu className="h-4.5 w-4.5" />
+      </Button>
+    </div>
   );
 }
