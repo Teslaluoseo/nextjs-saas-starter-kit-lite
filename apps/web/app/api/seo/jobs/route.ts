@@ -50,7 +50,12 @@ export async function POST(req: NextRequest) {
   const r = await fetch(`${API_BASE_URL}/seo/jobs`, {
     method: 'POST',
     body: upstream,
+    headers: {
+      // 🔴 这一行是关键：告诉后端这是 dev 用户
+      'X-User-Id': 'dev',
+    },
   });
+
 
   const text = await r.text();
 
