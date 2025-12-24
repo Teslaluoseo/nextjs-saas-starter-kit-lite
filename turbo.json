@@ -9,6 +9,8 @@
     "NEXT_PUBLIC_SITE_URL",
     "LOGGER",
     "CAPTCHA_SECRET_TOKEN"
+    "API_BASE_URL",
+    "CLERK_SECRET_KEY"
   ],
   "tasks": {
     "topo": {
