@@ -1,5 +1,7 @@
 import { cookies } from 'next/headers';
 
+import { ClerkProvider } from '@clerk/nextjs';
+
 import { Toaster } from '@kit/ui/sonner';
 import { cn } from '@kit/ui/utils';
 
@@ -7,8 +9,6 @@ import { RootProviders } from '~/components/root-providers';
 import { heading, sans } from '~/lib/fonts';
 import { createI18nServerInstance } from '~/lib/i18n/i18n.server';
 import { generateRootMetadata } from '~/lib/root-metdata';
-
-import { AppClerkProvider } from './clerk-provider';
 
 import '../styles/globals.css';
 
@@ -22,15 +22,16 @@ export default async function RootLayout({
   const className = getClassName(theme);
 
   return (
-    <html lang={language} className={className} suppressHydrationWarning>
+    <html lang={language} className={className}>
       <body>
-        <AppClerkProvider>
+        {/* ✅ ClerkProvider 必须在最外层（或至少包住所有会用 useAuth 的组件） */}
+        <ClerkProvider>
           <RootProviders theme={theme} lang={language}>
             {children}
           </RootProviders>
+        </ClerkProvider>
 
-          <Toaster richColors={true} theme={theme} position="top-center" />
-        </AppClerkProvider>
+        <Toaster richColors={true} theme={theme} position="top-center" />
       </body>
     </html>
   );
@@ -56,7 +57,6 @@ function getClassName(theme?: string) {
 
 async function getTheme() {
   const cookiesStore = await cookies();
-
   return cookiesStore.get('theme')?.value as 'light' | 'dark' | 'system';
 }
 
