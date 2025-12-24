@@ -3,7 +3,6 @@
 import { useMemo } from 'react';
 
 import dynamic from 'next/dynamic';
-
 import { ThemeProvider } from 'next-themes';
 
 import { CaptchaProvider } from '@kit/auth/captcha/client';
@@ -50,6 +49,7 @@ export function RootProviders({
         <CaptchaProvider>
           <CaptchaTokenSetter siteKey={captchaSiteKey} />
 
+          {/* 你原来的 AuthProvider 先保留（不删功能） */}
           <AuthProvider>
             <ThemeProvider
               attribute="class"
