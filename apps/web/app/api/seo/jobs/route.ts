@@ -1,29 +1,17 @@
 import { NextRequest, NextResponse } from 'next/server';
 
-/**
- * ✅ 强制 Node.js Runtime，避免 Edge Runtime 读不到 env
- */
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
-/**
- * ✅ dev 模式用户（绕过 Clerk）
- */
 const DEV_USER_ID = process.env.DEV_USER_ID?.trim() || 'dev';
 
-/**
- * ✅ 规范化 API_BASE_URL
- */
 function getApiBaseUrl() {
   const v = process.env.API_BASE_URL?.trim();
   return v && v.length > 0 ? v.replace(/\/+$/, '') : null;
 }
 
-/**
- * ✅ 安全解析 JSON（避免前端传 config_json 时炸）
- */
-function safeJsonParse(input: string | null): any | null {
-  if (!input) return null;
+function safeJsonParse(input: unknown): any | null {
+  if (typeof input !== 'string') return null;
   try {
     return JSON.parse(input);
   } catch {
@@ -31,65 +19,157 @@ function safeJsonParse(input: string | null): any | null {
   }
 }
 
-/**
- * ✅ 合并默认配置 + 覆盖配置（覆盖优先）
- */
-function mergeConfig(defaults: Record<string, any>, overrides?: Record<string, any> | null) {
-  if (!overrides) return defaults;
-  return { ...defaults, ...overrides };
+function getCorrelationId(req: NextRequest) {
+  return (
+    req.headers.get('x-correlation-id') ||
+    req.headers.get('x-request-id') ||
+    crypto.randomUUID()
+  );
 }
 
 /**
- * ✅ fetch 超时包装（避免网络卡死导致“无响应”）
+ * 你的 Streamlit 里真实会传的 config 字段（核心部分）
+ * 参考：app.py 里点击 Start Generation 的 config 结构。:contentReference[oaicite:3]{index=3}
  */
-async function fetchWithTimeout(
-  url: string,
-  init: RequestInit,
-  timeoutMs = 60_000,
-) {
-  const controller = new AbortController();
-  const id = setTimeout(() => controller.abort(), timeoutMs);
+function buildDefaultConfig() {
+  const modelOptions = [
+    'google/gemini-2.5-pro',
+    'google/gemini-2.5-pro-preview',
+    'anthropic/claude-sonnet-4',
+    'anthropic/claude-3.5-sonnet',
+    'openai/gpt-4o',
+    'openai/gpt-4o-mini',
+    'google/gemini-3-pro-preview',
+    'anthropic/claude-sonnet-4.5',
+    'openai/gpt-5.1',
+  ];
 
-  try {
-    return await fetch(url, {
-      ...init,
-      signal: controller.signal,
-    });
-  } finally {
-    clearTimeout(id);
+  const defaultModelOutline = process.env.DEFAULT_MODEL_OUTLINE || modelOptions[0];
+  const defaultModelWriter = process.env.DEFAULT_MODEL_WRITER || modelOptions[0];
+  const defaultModelRewrite = process.env.DEFAULT_MODEL_REWRITE || modelOptions[2];
+  const defaultModelRestore = process.env.DEFAULT_MODEL_RESTORE || modelOptions[1];
+  const defaultModelSeo = process.env.DEFAULT_MODEL_SEO || modelOptions[2];
+
+  return {
+    // ===== 你后端 job kind（如果后端忽略也没问题）=====
+    kind: 'seo_generate',
+
+    // ===== Streamlit 核心字段（缺一个就会 KeyError）=====
+    language: 'English', // 你 Streamlit 用的是 English/Spanish/... :contentReference[oaicite:4]{index=4}
+    mode: 'SEO', // SEO / GEO :contentReference[oaicite:5]{index=5}
+
+    model_outline: defaultModelOutline,
+    model_writer: defaultModelWriter,
+    model_rewrite: defaultModelRewrite,
+    model_restore: defaultModelRestore,
+    model_seo: defaultModelSeo,
+
+    use_rephrasy: true,
+    product_level: '简短提及',
+
+    // 图片相关（Streamlit 的 Enable Image Insertion + source）:contentReference[oaicite:6]{index=6}
+    enable_image_feature: true,
+    generate_images: false,
+    num_images: 0,
+    ui_custom_images: [],
+
+    // GEO/品牌信息（你 Streamlit 里 GEO 会用 brand_info）:contentReference[oaicite:7]{index=7}
+    brand_info: '',
+
+    // 视频相关 :contentReference[oaicite:8]{index=8}
+    use_youtube: true,
+    custom_youtube_url: '',
+
+    // 作者 :contentReference[oaicite:9]{index=9}
+    ui_author_name: '',
+
+    // 兼容你之前 defaultConfig 里出现过的字段（后端不用会忽略）
+    country: 'US',
+    temperature: 0.7,
+    output_format: 'markdown',
+    include_schema: true,
+    include_images: false,
+    concurrency: 1,
+    dry_run: false,
+  };
+}
+
+function mergeConfig(userConfig: any) {
+  const base = buildDefaultConfig();
+  const cfg = { ...base, ...(userConfig && typeof userConfig === 'object' ? userConfig : {}) };
+
+  // 兜底：确保关键字段一定存在（防止前端传了空值/删掉）
+  const mustKeys: Array<keyof typeof base> = [
+    'language',
+    'mode',
+    'model_outline',
+    'model_writer',
+    'model_rewrite',
+    'model_restore',
+    'model_seo',
+    'use_rephrasy',
+    'product_level',
+    'enable_image_feature',
+    'generate_images',
+    'num_images',
+    'ui_custom_images',
+    'brand_info',
+    'use_youtube',
+    'custom_youtube_url',
+    'ui_author_name',
+  ];
+
+  for (const k of mustKeys) {
+    if (cfg[k] === undefined || cfg[k] === null) cfg[k] = (base as any)[k];
   }
+
+  // 类型修正
+  cfg.use_rephrasy = Boolean(cfg.use_rephrasy);
+  cfg.enable_image_feature = Boolean(cfg.enable_image_feature);
+  cfg.generate_images = Boolean(cfg.generate_images);
+  cfg.use_youtube = Boolean(cfg.use_youtube);
+
+  if (!Number.isFinite(Number(cfg.num_images))) cfg.num_images = 0;
+  cfg.num_images = Number(cfg.num_images);
+
+  if (!Array.isArray(cfg.ui_custom_images)) cfg.ui_custom_images = [];
+
+  if (typeof cfg.language !== 'string' || !cfg.language.trim()) cfg.language = base.language;
+  if (typeof cfg.mode !== 'string' || !cfg.mode.trim()) cfg.mode = base.mode;
+
+  return cfg;
 }
 
 /**
- * ✅ 调试接口：检查 env / dev user
- * 打开：/api/seo/jobs
+ * 调试：打开 /api/seo/jobs 看 env 是否生效
  */
-export async function GET() {
-  return NextResponse.json({
-    ok: true,
-    API_BASE_URL: getApiBaseUrl(),
-    DEV_USER_ID,
-  });
+export async function GET(req: NextRequest) {
+  const correlationId = getCorrelationId(req);
+  return NextResponse.json(
+    {
+      ok: true,
+      API_BASE_URL: getApiBaseUrl(),
+      DEV_USER_ID,
+      correlationId,
+    },
+    { headers: { 'x-correlation-id': correlationId } },
+  );
 }
 
 /**
- * ✅ 上传 Excel → 创建 SEO Job
- *
- * 前端上传：multipart/form-data
- * - file 或 excel：Excel 文件
- * - config_json（可选）：JSON 字符串，用来覆盖默认配置
+ * 上传 Excel → 创建 SEO Job
  */
 export async function POST(req: NextRequest) {
   const API_BASE_URL = getApiBaseUrl();
+  const correlationId = getCorrelationId(req);
 
   if (!API_BASE_URL) {
     return NextResponse.json(
       { error: 'Missing API_BASE_URL in env' },
-      { status: 500 },
+      { status: 500, headers: { 'x-correlation-id': correlationId } },
     );
   }
 
-  // 1) 读取前端 formData
   const incoming = await req.formData();
 
   // 兼容字段名：file / excel
@@ -101,116 +181,36 @@ export async function POST(req: NextRequest) {
         error:
           'Missing upload file. Please upload via form-data with field "file" (or "excel").',
       },
-      { status: 400 },
+      { status: 400, headers: { 'x-correlation-id': correlationId } },
     );
   }
 
-  // 可选：前端传来的 config_json（如果你以后页面加按钮，就可以传这个来覆盖默认值）
-  const incomingConfigRaw = incoming.get('config_json');
-  const incomingConfig =
-    typeof incomingConfigRaw === 'string' ? safeJsonParse(incomingConfigRaw) : null;
+  // 前端可选传 config_json；不传也没关系，我们会自动补齐
+  const rawConfig = incoming.get('config_json');
+  const parsed = safeJsonParse(rawConfig);
+  const finalConfig = mergeConfig(parsed);
 
-  // 2) 构造后端需要的 FormData（FastAPI：excel + config_json）
   const upstream = new FormData();
   upstream.set('excel', file, file.name);
+  upstream.set('config_json', JSON.stringify(finalConfig));
 
-  /**
-   * 3) ✅ 一次性补齐高频必填字段（防 KeyError）
-   *
-   * 你后端已经明确报过：
-   * - 缺 language
-   * - 缺 mode
-   *
-   * 所以这里把“最常见会被直接 config['xxx'] 访问”的字段都补齐。
-   * 后端不认识的字段会忽略；认识的字段能直接用。
-   */
-  const defaultConfig = {
-    // ===== 任务类型/模式 =====
-    kind: 'seo_generate',
-    mode: 'batch', // ✅ 关键：你后端已经 KeyError 缺这个
-
-    // ===== 语言/地区 =====
-    language: 'en', // ✅ 关键：你后端已经 KeyError 缺这个
-    country: 'US',
-    locale: 'en-US',
-
-    // ===== 模型/提供方 =====
-    model_provider: 'openrouter',
-    model: process.env.DEFAULT_MODEL || 'openrouter',
-    temperature: 0.7,
-    top_p: 1,
-
-    // ===== 批处理/并发 =====
-    concurrency: 1,
-    batch_size: 1,
-
-    // ===== SEO 内容参数（常见字段，后端需要就用，不需要就忽略）=====
-    niche: 'general',
-    tone: 'professional',
-    audience: 'general',
-    max_words: 1200,
-    min_words: 800,
-    include_faq: true,
-    include_conclusion: true,
-
-    // ===== 工具开关（你提到的 Hive/Tavily/Rephrasy）=====
-    use_tavily: true,
-    use_rephrasy: false,
-    use_hive: true,
-
-    // ===== 输出控制 =====
-    output_format: 'markdown',
-    include_images: false,
-    include_schema: true,
-
-    // ===== 运行控制 =====
-    dry_run: false,
-    debug: false,
-
-    // ===== 预留字段（有些后端会用到，不给就 KeyError）=====
-    site_url: '',
-    brand_name: '',
-    project_name: 'seo-jobs',
-  };
-
-  // 合并：默认配置 +（可选）前端覆盖配置
-  const mergedConfig = mergeConfig(defaultConfig, incomingConfig);
-
-  upstream.set('config_json', JSON.stringify(mergedConfig));
-
-  // 4) 转发给 Railway FastAPI
-  let r: Response;
-  try {
-    r = await fetchWithTimeout(
-      `${API_BASE_URL}/seo/jobs`,
-      {
-        method: 'POST',
-        body: upstream,
-        headers: {
-          // ✅ dev 模式绕过 Clerk
-          'X-User-Id': DEV_USER_ID,
-        },
-      },
-      120_000, // 2 分钟超时：上传+创建任务一般够用
-    );
-  } catch (e: any) {
-    const msg =
-      e?.name === 'AbortError'
-        ? 'Upstream timeout while creating job'
-        : `Upstream fetch failed: ${e?.message || String(e)}`;
-
-    return NextResponse.json({ error: msg }, { status: 502 });
-  }
+  const r = await fetch(`${API_BASE_URL}/seo/jobs`, {
+    method: 'POST',
+    body: upstream,
+    headers: {
+      // dev 模式绕过 Clerk（你后端现在就是这么提示的）
+      'X-User-Id': DEV_USER_ID,
+      'X-Correlation-Id': correlationId,
+    },
+  });
 
   const text = await r.text();
 
-  // 5) 原样透传后端返回
   return new NextResponse(text, {
     status: r.status,
     headers: {
       'content-type': r.headers.get('content-type') ?? 'application/json',
-      // 小优化：方便你排查请求链路
-      'x-proxy-upstream': 'railway',
+      'x-correlation-id': correlationId,
     },
   });
 }
