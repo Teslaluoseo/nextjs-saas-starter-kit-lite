@@ -10,26 +10,32 @@ function getApiBaseUrl() {
   return v && v.length > 0 ? v.replace(/\/+$/, '') : null;
 }
 
-export async function GET(
-  _req: NextRequest,
-  context: { params: Promise<{ jobId: string }> },
-) {
+function getCorrelationId(req: NextRequest) {
+  return (
+    req.headers.get('x-correlation-id') ||
+    req.headers.get('x-request-id') ||
+    crypto.randomUUID()
+  );
+}
+
+export async function GET(req: NextRequest, ctx: { params: Promise<{ jobId: string }> }) {
   const API_BASE_URL = getApiBaseUrl();
+  const correlationId = getCorrelationId(req);
 
   if (!API_BASE_URL) {
     return NextResponse.json(
       { error: 'Missing API_BASE_URL in env' },
-      { status: 500 },
+      { status: 500, headers: { 'x-correlation-id': correlationId } },
     );
   }
 
-  const { jobId } = await context.params;
+  const { jobId } = await ctx.params;
 
   const r = await fetch(`${API_BASE_URL}/seo/jobs/${encodeURIComponent(jobId)}`, {
     method: 'GET',
     headers: {
-      // ✅ dev 模式绕过 Clerk（查状态也必须带）
       'X-User-Id': DEV_USER_ID,
+      'X-Correlation-Id': correlationId,
     },
     cache: 'no-store',
   });
@@ -40,6 +46,7 @@ export async function GET(
     status: r.status,
     headers: {
       'content-type': r.headers.get('content-type') ?? 'application/json',
+      'x-correlation-id': correlationId,
     },
   });
 }
