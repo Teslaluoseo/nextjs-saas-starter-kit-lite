@@ -1,64 +1,84 @@
-import { NextResponse } from "next/server";
-import { auth } from "@clerk/nextjs/server";
+import { NextResponse } from 'next/server';
+import { auth } from '@clerk/nextjs/server';
 
-export const runtime = "nodejs";
+export const runtime = 'nodejs';
 
-function getBackendUrlSafe() {
-  const raw = process.env.BACKEND_URL || "";
-  const url = raw.trim().replace(/\/+$/, "");
+function getApiBaseUrl() {
+  const raw =
+    process.env.API_BASE_URL ||
+    process.env.API_PROXY_TARGET ||
+    process.env.NEXT_PUBLIC_BACKEND_URL; // 兜底（不推荐用 public）
 
+  const url = (raw ?? '').trim().replace(/\/+$/, '');
   if (!url) {
-    return { ok: false as const, error: "Missing env BACKEND_URL" };
+    throw new Error(
+      "Missing API_BASE_URL. Set Vercel env: API_BASE_URL='https://api.blogpostaboutai.com'"
+    );
   }
-  if (!/^https:\/\/.+/i.test(url)) {
-    return { ok: false as const, error: `BACKEND_URL must start with https://, got: ${raw}` };
+  if (!url.startsWith('https://') && process.env.NODE_ENV === 'production') {
+    throw new Error(`API_BASE_URL must be https in production. Got: ${url}`);
   }
-  return { ok: true as const, url };
+  return url;
 }
 
+function jsonError(where: string, err: unknown, status = 500) {
+  const e = err as any;
+  return NextResponse.json(
+    {
+      ok: false,
+      where,
+      error: e?.message ?? String(err),
+      stack: e?.stack ?? undefined,
+    },
+    { status }
+  );
+}
+
+/**
+ * POST /api/seo/jobs
+ * Proxy to: POST ${API_BASE_URL}/seo/jobs
+ * Accepts multipart/form-data: excel, config_json, images_zip?
+ */
 export async function POST(req: Request) {
   try {
-    const backend = getBackendUrlSafe();
-    if (!backend.ok) {
-      return NextResponse.json(
-        { ok: false, where: "api/seo/jobs", error: backend.error },
-        { status: 500 }
-      );
+    const API_BASE_URL = getApiBaseUrl();
+
+    // 读取原始 formData（Next.js Route Handler 原生支持）
+    const incomingForm = await req.formData();
+
+    // 重新组装一份（更安全，避免某些 runtime 对 incomingForm 的惰性对象出问题）
+    const form = new FormData();
+    for (const [key, value] of incomingForm.entries()) {
+      form.append(key, value as any);
     }
 
-    const { userId, getToken } = auth();
+    // Clerk token（如果用户已登录）
+    const { getToken } = auth();
     const token = await getToken().catch(() => null);
 
-    const formData = await req.formData();
-
-    const headers: Record<string, string> = {};
-    if (token) headers["Authorization"] = `Bearer ${token}`;
-    if (userId) headers["X-User-Id"] = userId;
-
-    const resp = await fetch(`${backend.url}/seo/jobs`, {
-      method: "POST",
-      headers,
-      body: formData,
-      cache: "no-store",
-      redirect: "follow",
-    });
-
-    const contentType = resp.headers.get("Content-Type") || "application/json";
-    const text = await resp.text();
-
-    return new NextResponse(text, {
-      status: resp.status,
-      headers: { "Content-Type": contentType, "Cache-Control": "no-store" },
-    });
-  } catch (e: any) {
-    return NextResponse.json(
-      {
-        ok: false,
-        where: "api/seo/jobs",
-        error: String(e?.message ?? e),
-        stack: e?.stack ?? null,
+    // 透传到后端
+    const upstream = await fetch(`${API_BASE_URL}/seo/jobs`, {
+      method: 'POST',
+      headers: {
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        // ⚠️ 不要手动设置 Content-Type，fetch 会自动带 boundary
       },
-      { status: 500 }
-    );
+      body: form,
+      cache: 'no-store',
+    });
+
+    const contentType = upstream.headers.get('content-type') || '';
+    const status = upstream.status;
+
+    // 统一把后端的 body 原样返回（json / text 都行）
+    if (contentType.includes('application/json')) {
+      const data = await upstream.json().catch(() => null);
+      return NextResponse.json(data ?? { ok: false, error: 'Invalid JSON from upstream' }, { status });
+    } else {
+      const text = await upstream.text().catch(() => '');
+      return new NextResponse(text, { status, headers: { 'content-type': contentType || 'text/plain' } });
+    }
+  } catch (err) {
+    return jsonError('api/seo/jobs:POST', err, 500);
   }
 }
