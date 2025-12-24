@@ -1,72 +1,37 @@
 {
   "$schema": "https://turborepo.org/schema.json",
-  "globalDependencies": [
-    "**/.env"
-  ],
+  "globalDependencies": ["**/.env"],
   "ui": "stream",
   "globalEnv": [
     "NEXT_PUBLIC_PRODUCT_NAME",
     "NEXT_PUBLIC_SITE_URL",
     "LOGGER",
-    "CAPTCHA_SECRET_TOKEN"
+    "CAPTCHA_SECRET_TOKEN",
     "API_BASE_URL",
     "CLERK_SECRET_KEY"
   ],
   "tasks": {
-    "topo": {
-      "dependsOn": [
-        "^topo"
-      ]
-    },
+    "topo": { "dependsOn": ["^topo"] },
     "build": {
-      "dependsOn": [
-        "^build"
-      ],
-      "outputs": [
-        ".next/**",
-        "!.next/cache/**",
-        "next-env.d.ts"
-      ]
+      "dependsOn": ["^build"],
+      "outputs": [".next/**", "!.next/cache/**", "next-env.d.ts"]
     },
-    "dev": {
-      "persistent": true,
-      "cache": false
-    },
+    "dev": { "persistent": true, "cache": false },
     "format": {
-      "outputs": [
-        "node_modules/.cache/.prettiercache"
-      ],
+      "outputs": ["node_modules/.cache/.prettiercache"],
       "outputLogs": "new-only"
     },
     "lint": {
-      "dependsOn": [
-        "^topo"
-      ],
-      "outputs": [
-        "node_modules/.cache/.eslintcache"
-      ]
+      "dependsOn": ["^topo"],
+      "outputs": ["node_modules/.cache/.eslintcache"]
     },
     "typecheck": {
-      "dependsOn": [
-        "^topo"
-      ],
-      "outputs": [
-        "node_modules/.cache/tsbuildinfo.json"
-      ]
+      "dependsOn": ["^topo"],
+      "outputs": ["node_modules/.cache/tsbuildinfo.json"]
     },
-    "test": {
-      "dependsOn": [
-        "^topo"
-      ]
-    },
-    "clean": {
-      "cache": false
-    },
-    "//#clean": {
-      "cache": false
-    },
-    "license#dev": {
-      "outputLogs": "errors-only"
-    }
+    "test": { "dependsOn": ["^topo"] },
+    "clean": { "cache": false },
+    "//#clean": { "cache": false },
+    "license#dev": { "outputLogs": "errors-only" }
   }
 }
