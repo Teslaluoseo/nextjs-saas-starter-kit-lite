@@ -79,7 +79,20 @@ const DEFAULT_CONFIG: AdvancedConfig = {
   model_outline: "gpt-4o-mini",
 };
 
-const BACKEND = process.env.NEXT_PUBLIC_BACKEND_URL;
+/**
+ * ✅ IMPORTANT:
+ * Frontend must NEVER call backend directly (localhost / railway).
+ * Always call same-origin Next API routes:
+ * - POST /api/seo/jobs
+ * - GET  /api/seo/jobs/{jobId}
+ * - GET  /api/seo/jobs/{jobId}/download
+ */
+const API = {
+  createJob: "/api/seo/jobs",
+  getJob: (id: string) => `/api/seo/jobs/${encodeURIComponent(id)}`,
+  downloadXlsx: (id: string) =>
+    `/api/seo/jobs/${encodeURIComponent(id)}/download`,
+};
 
 function safeInt(v: string, fallback: number) {
   const n = Number.parseInt(v, 10);
@@ -89,10 +102,6 @@ function safeInt(v: string, fallback: number) {
 function clamp01(n: number) {
   if (!Number.isFinite(n)) return 0;
   return Math.max(0, Math.min(1, n));
-}
-
-async function readAsArrayBuffer(file: File) {
-  return await file.arrayBuffer();
 }
 
 function makeFilenameSafe(name: string) {
@@ -166,21 +175,16 @@ async function buildTemplateXlsx() {
 }
 
 /**
- * Backend calls
- * - POST /seo/jobs (multipart: excel, config_json, images_zip?)
- * - GET /seo/jobs/{job_id}
- * - GET /seo/jobs/{job_id}/download  (xlsx)
+ * Same-origin API calls (Next.js Route Handlers)
  */
-async function backendFetchJson(args: {
+async function apiFetchJson(args: {
   path: string;
   method?: "GET" | "POST";
   token?: string | null;
   xUserId?: string;
   body?: any;
 }) {
-  if (!BACKEND) throw new Error("NEXT_PUBLIC_BACKEND_URL is not set.");
-
-  const res = await fetch(`${BACKEND}${args.path}`, {
+  const res = await fetch(args.path, {
     method: args.method ?? "GET",
     headers: {
       "Content-Type": "application/json",
@@ -192,21 +196,19 @@ async function backendFetchJson(args: {
   });
 
   if (!res.ok) {
-    const text = await res.text();
-    throw new Error(`Backend ${res.status}: ${text}`);
+    const text = await res.text().catch(() => "");
+    throw new Error(`API ${res.status}: ${text}`);
   }
   return await res.json();
 }
 
-async function backendUploadMultipart(args: {
+async function apiUploadMultipart(args: {
   path: string;
   token?: string | null;
   xUserId?: string;
   form: FormData;
 }) {
-  if (!BACKEND) throw new Error("NEXT_PUBLIC_BACKEND_URL is not set.");
-
-  const res = await fetch(`${BACKEND}${args.path}`, {
+  const res = await fetch(args.path, {
     method: "POST",
     headers: {
       ...(args.token ? { Authorization: `Bearer ${args.token}` } : {}),
@@ -218,20 +220,18 @@ async function backendUploadMultipart(args: {
   });
 
   if (!res.ok) {
-    const text = await res.text();
-    throw new Error(`Backend ${res.status}: ${text}`);
+    const text = await res.text().catch(() => "");
+    throw new Error(`API ${res.status}: ${text}`);
   }
   return await res.json();
 }
 
-async function backendDownloadXlsx(args: {
+async function apiDownloadBlob(args: {
   path: string;
   token?: string | null;
   xUserId?: string;
 }) {
-  if (!BACKEND) throw new Error("NEXT_PUBLIC_BACKEND_URL is not set.");
-
-  const res = await fetch(`${BACKEND}${args.path}`, {
+  const res = await fetch(args.path, {
     method: "GET",
     headers: {
       ...(args.token ? { Authorization: `Bearer ${args.token}` } : {}),
@@ -241,12 +241,11 @@ async function backendDownloadXlsx(args: {
   });
 
   if (!res.ok) {
-    const text = await res.text();
-    throw new Error(`Backend ${res.status}: ${text}`);
+    const text = await res.text().catch(() => "");
+    throw new Error(`API ${res.status}: ${text}`);
   }
 
-  const blob = await res.blob();
-  return blob;
+  return await res.blob();
 }
 
 export default function CreateContentPage() {
@@ -276,7 +275,7 @@ export default function CreateContentPage() {
   const [logs, setLogs] = useState<string[]>([]);
   const [error, setError] = useState<string>("");
 
-  // Job result: backend mainly gives xlsx download. We still keep a preview placeholder.
+  // Job result meta
   const [resultMeta, setResultMeta] = useState<any>(null);
 
   const pollTimer = useRef<NodeJS.Timeout | null>(null);
@@ -315,7 +314,6 @@ export default function CreateContentPage() {
     const xUserId = token ? "" : devUserId.trim();
 
     if (!token && !xUserId) {
-      // If Clerk is not working yet, this tells you exactly what to do
       throw new Error(
         "No Clerk token available. If backend is in dev mode, fill in Dev User ID (X-User-Id). Otherwise fix Clerk login first."
       );
@@ -327,14 +325,13 @@ export default function CreateContentPage() {
   async function pollJobOnce(job_id: string) {
     const { token, xUserId } = await getAuthForBackend();
 
-    const data = await backendFetchJson({
-      path: `/seo/jobs/${job_id}`,
+    const data = await apiFetchJson({
+      path: API.getJob(job_id),
       method: "GET",
       token,
       xUserId,
     });
 
-    // We normalize expected fields.
     const st = String(data.status ?? "running").toLowerCase();
     const p = clamp01(Number(data.progress ?? 0));
     const logLines: string[] = Array.isArray(data.logs) ? data.logs : [];
@@ -355,7 +352,6 @@ export default function CreateContentPage() {
     if (data.result) setResultMeta(data.result);
     if (data.result_meta) setResultMeta(data.result_meta);
 
-    // stop polling if done
     if (st === "succeeded" || st === "failed") {
       clearPolling();
     }
@@ -396,11 +392,10 @@ export default function CreateContentPage() {
       const form = new FormData();
       form.append("excel", file);
       form.append("config_json", JSON.stringify(cfg));
-      // images_zip is optional; in single mode we keep off by default
 
-      pushLog("🚀 POST /seo/jobs ...");
-      const resp = await backendUploadMultipart({
-        path: "/seo/jobs",
+      pushLog(`🚀 POST ${API.createJob} ...`);
+      const resp = await apiUploadMultipart({
+        path: API.createJob,
         token,
         xUserId,
         form,
@@ -436,9 +431,9 @@ export default function CreateContentPage() {
       form.append("config_json", JSON.stringify(cfg));
       if (imagesZip) form.append("images_zip", imagesZip);
 
-      pushLog("🚀 POST /seo/jobs (batch) ...");
-      const resp = await backendUploadMultipart({
-        path: "/seo/jobs",
+      pushLog(`🚀 POST ${API.createJob} (batch) ...`);
+      const resp = await apiUploadMultipart({
+        path: API.createJob,
         token,
         xUserId,
         form,
@@ -462,8 +457,8 @@ export default function CreateContentPage() {
 
     try {
       const { token, xUserId } = await getAuthForBackend();
-      const blob = await backendDownloadXlsx({
-        path: `/seo/jobs/${jobId}/download`,
+      const blob = await apiDownloadBlob({
+        path: API.downloadXlsx(jobId),
         token,
         xUserId,
       });
@@ -493,7 +488,6 @@ export default function CreateContentPage() {
     }
   }
 
-  // cleanup polling on unmount
   useEffect(() => {
     return () => clearPolling();
   }, []);
@@ -508,8 +502,16 @@ export default function CreateContentPage() {
         </Badge>
       );
     if (status === "succeeded")
-      return <Badge className="bg-emerald-500/15 text-emerald-700 dark:text-emerald-200">Succeeded</Badge>;
-    return <Badge className="bg-red-500/15 text-red-700 dark:text-red-200">Failed</Badge>;
+      return (
+        <Badge className="bg-emerald-500/15 text-emerald-700 dark:text-emerald-200">
+          Succeeded
+        </Badge>
+      );
+    return (
+      <Badge className="bg-red-500/15 text-red-700 dark:text-red-200">
+        Failed
+      </Badge>
+    );
   })();
 
   return (
@@ -557,8 +559,8 @@ export default function CreateContentPage() {
                 <div className="flex items-start gap-2">
                   <AlertTriangle className="h-4 w-4 mt-0.5 text-muted-foreground" />
                   <div className="text-xs text-muted-foreground">
-                    If Clerk token is unavailable (dev mode backend), fill Dev User ID.
-                    Otherwise leave empty.
+                    If Clerk token is unavailable (dev mode backend), fill Dev User
+                    ID. Otherwise leave empty.
                   </div>
                 </div>
 
@@ -572,7 +574,8 @@ export default function CreateContentPage() {
                 </div>
 
                 <div className="mt-2 text-[11px] text-muted-foreground">
-                  Signed in: <span className="font-medium">{String(!!isSignedIn)}</span>
+                  Signed in:{" "}
+                  <span className="font-medium">{String(!!isSignedIn)}</span>
                 </div>
               </div>
 
@@ -586,7 +589,8 @@ export default function CreateContentPage() {
                       placeholder='e.g. "12 volt rv refrigerator"'
                     />
                     <div className="text-[11px] text-muted-foreground">
-                      Single mode builds a 1-row .xlsx and runs the same backend pipeline.
+                      Single mode builds a 1-row .xlsx and runs the same backend
+                      pipeline.
                     </div>
                   </div>
 
@@ -602,7 +606,9 @@ export default function CreateContentPage() {
 
                   <div className="flex flex-wrap gap-2">
                     <Button
-                      disabled={!canRunSingle || status === "running" || status === "queued"}
+                      disabled={
+                        !canRunSingle || status === "running" || status === "queued"
+                      }
                       onClick={runSingle}
                       className="rounded-xl"
                     >
@@ -624,7 +630,11 @@ export default function CreateContentPage() {
                 <>
                   <div className="flex items-center justify-between">
                     <div className="text-xs font-medium">Excel template</div>
-                    <Button variant="outline" onClick={downloadTemplate} className="h-8 rounded-xl text-xs">
+                    <Button
+                      variant="outline"
+                      onClick={downloadTemplate}
+                      className="h-8 rounded-xl text-xs"
+                    >
                       <FileSpreadsheet className="mr-2 h-4 w-4" />
                       Download template
                     </Button>
@@ -638,12 +648,15 @@ export default function CreateContentPage() {
                       onChange={(e) => setExcelFile(e.target.files?.[0] ?? null)}
                     />
                     <div className="text-[11px] text-muted-foreground">
-                      Must include columns: main_keyword, secondary_keyword, topic, wordcounts, specific.
+                      Must include columns: main_keyword, secondary_keyword, topic,
+                      wordcounts, specific.
                     </div>
                   </div>
 
                   <div className="space-y-2">
-                    <div className="text-xs font-medium">Optional images zip (images_zip)</div>
+                    <div className="text-xs font-medium">
+                      Optional images zip (images_zip)
+                    </div>
                     <Input
                       type="file"
                       accept=".zip"
@@ -656,7 +669,9 @@ export default function CreateContentPage() {
 
                   <div className="flex flex-wrap gap-2">
                     <Button
-                      disabled={!canRunBatch || status === "running" || status === "queued"}
+                      disabled={
+                        !canRunBatch || status === "running" || status === "queued"
+                      }
                       onClick={runBatch}
                       className="rounded-xl"
                     >
@@ -684,8 +699,8 @@ export default function CreateContentPage() {
               <div className="space-y-1">
                 <CardTitle className="text-sm">Run</CardTitle>
                 <div className="text-[11px] text-muted-foreground">
-                  Job: <span className="font-medium">{jobId || "-"}</span> • Progress:{" "}
-                  <span className="font-medium">{progress}%</span>
+                  Job: <span className="font-medium">{jobId || "-"}</span> •
+                  Progress: <span className="font-medium">{progress}%</span>
                 </div>
               </div>
 
@@ -731,9 +746,7 @@ export default function CreateContentPage() {
 
                   <div className="h-[360px] overflow-auto rounded-xl bg-muted/30 p-3 text-[12px] leading-relaxed">
                     {logs.length === 0 ? (
-                      <div className="text-muted-foreground">
-                        No logs yet. Start a job.
-                      </div>
+                      <div className="text-muted-foreground">No logs yet. Start a job.</div>
                     ) : (
                       logs.map((l, idx) => (
                         <div key={idx} className="whitespace-pre-wrap">
@@ -758,7 +771,8 @@ export default function CreateContentPage() {
                       <>
                         <div className="text-sm font-medium">✅ Job finished</div>
                         <div className="mt-2 text-xs text-muted-foreground">
-                          Download the xlsx result. (Your legacy pipeline writes final content into the spreadsheet.)
+                          Download the xlsx result. (Your legacy pipeline writes final
+                          content into the spreadsheet.)
                         </div>
 
                         {resultMeta ? (
@@ -814,7 +828,9 @@ export default function CreateContentPage() {
                   <div className="text-xs font-medium">Mode</div>
                   <Select
                     value={cfg.mode}
-                    onValueChange={(v) => setCfg((p) => ({ ...p, mode: v as any }))}
+                    onValueChange={(v) =>
+                      setCfg((p) => ({ ...p, mode: v as any }))
+                    }
                   >
                     <SelectTrigger>
                       <SelectValue />
@@ -867,10 +883,14 @@ export default function CreateContentPage() {
                 <div className="text-xs font-medium">Models</div>
 
                 <div className="grid gap-2">
-                  <div className="text-[11px] text-muted-foreground">Outline model</div>
+                  <div className="text-[11px] text-muted-foreground">
+                    Outline model
+                  </div>
                   <Select
                     value={cfg.model_outline}
-                    onValueChange={(v) => setCfg((p) => ({ ...p, model_outline: v }))}
+                    onValueChange={(v) =>
+                      setCfg((p) => ({ ...p, model_outline: v }))
+                    }
                   >
                     <SelectTrigger>
                       <SelectValue />
@@ -878,16 +898,22 @@ export default function CreateContentPage() {
                     <SelectContent>
                       <SelectItem value="gpt-4o-mini">gpt-4o-mini</SelectItem>
                       <SelectItem value="gpt-4.1-mini">gpt-4.1-mini</SelectItem>
-                      <SelectItem value="claude-3.5-sonnet">claude-3.5-sonnet</SelectItem>
+                      <SelectItem value="claude-3.5-sonnet">
+                        claude-3.5-sonnet
+                      </SelectItem>
                     </SelectContent>
                   </Select>
                 </div>
 
                 <div className="grid gap-2">
-                  <div className="text-[11px] text-muted-foreground">Writer model</div>
+                  <div className="text-[11px] text-muted-foreground">
+                    Writer model
+                  </div>
                   <Select
                     value={cfg.model_writer}
-                    onValueChange={(v) => setCfg((p) => ({ ...p, model_writer: v }))}
+                    onValueChange={(v) =>
+                      setCfg((p) => ({ ...p, model_writer: v }))
+                    }
                   >
                     <SelectTrigger>
                       <SelectValue />
@@ -895,7 +921,9 @@ export default function CreateContentPage() {
                     <SelectContent>
                       <SelectItem value="gpt-4o-mini">gpt-4o-mini</SelectItem>
                       <SelectItem value="gpt-4.1">gpt-4.1</SelectItem>
-                      <SelectItem value="claude-3.5-sonnet">claude-3.5-sonnet</SelectItem>
+                      <SelectItem value="claude-3.5-sonnet">
+                        claude-3.5-sonnet
+                      </SelectItem>
                     </SelectContent>
                   </Select>
                 </div>
@@ -916,13 +944,17 @@ export default function CreateContentPage() {
                   </div>
                   <Switch
                     checked={cfg.enable_images}
-                    onCheckedChange={(v) => setCfg((p) => ({ ...p, enable_images: v }))}
+                    onCheckedChange={(v) =>
+                      setCfg((p) => ({ ...p, enable_images: v }))
+                    }
                   />
                 </div>
 
                 <div className="grid grid-cols-2 gap-3">
                   <div className="grid gap-2">
-                    <div className="text-[11px] text-muted-foreground">Image count</div>
+                    <div className="text-[11px] text-muted-foreground">
+                      Image count
+                    </div>
                     <Input
                       disabled={!cfg.enable_images}
                       value={String(cfg.image_count)}
@@ -938,7 +970,9 @@ export default function CreateContentPage() {
                   <div className="flex items-center justify-between rounded-xl border border-border bg-card px-3 py-2.5">
                     <div>
                       <div className="text-sm">Video</div>
-                      <div className="text-[11px] text-muted-foreground">YouTube embed</div>
+                      <div className="text-[11px] text-muted-foreground">
+                        YouTube embed
+                      </div>
                     </div>
                     <Switch
                       checked={cfg.enable_video}
@@ -963,41 +997,57 @@ export default function CreateContentPage() {
                 <div className="flex items-center justify-between rounded-xl border border-border bg-card px-3 py-2.5">
                   <div>
                     <div className="text-sm">Internal links</div>
-                    <div className="text-[11px] text-muted-foreground">Insert internal links</div>
+                    <div className="text-[11px] text-muted-foreground">
+                      Insert internal links
+                    </div>
                   </div>
                   <Switch
                     checked={cfg.enable_internal_links}
-                    onCheckedChange={(v) => setCfg((p) => ({ ...p, enable_internal_links: v }))}
+                    onCheckedChange={(v) =>
+                      setCfg((p) => ({ ...p, enable_internal_links: v }))
+                    }
                   />
                 </div>
 
                 <div className="flex items-center justify-between rounded-xl border border-border bg-card px-3 py-2.5">
                   <div>
                     <div className="text-sm">External links</div>
-                    <div className="text-[11px] text-muted-foreground">Citations & outbound sources</div>
+                    <div className="text-[11px] text-muted-foreground">
+                      Citations & outbound sources
+                    </div>
                   </div>
                   <Switch
                     checked={cfg.enable_external_links}
-                    onCheckedChange={(v) => setCfg((p) => ({ ...p, enable_external_links: v }))}
+                    onCheckedChange={(v) =>
+                      setCfg((p) => ({ ...p, enable_external_links: v }))
+                    }
                   />
                 </div>
 
                 <div className="flex items-center justify-between rounded-xl border border-border bg-card px-3 py-2.5">
                   <div>
                     <div className="text-sm">Facts & evidence</div>
-                    <div className="text-[11px] text-muted-foreground">Generate evidence + cite</div>
+                    <div className="text-[11px] text-muted-foreground">
+                      Generate evidence + cite
+                    </div>
                   </div>
                   <Switch
                     checked={cfg.enable_facts}
-                    onCheckedChange={(v) => setCfg((p) => ({ ...p, enable_facts: v }))}
+                    onCheckedChange={(v) =>
+                      setCfg((p) => ({ ...p, enable_facts: v }))
+                    }
                   />
                 </div>
 
                 <div className="grid gap-2">
-                  <div className="text-[11px] text-muted-foreground">Citations style</div>
+                  <div className="text-[11px] text-muted-foreground">
+                    Citations style
+                  </div>
                   <Select
                     value={cfg.citations_style}
-                    onValueChange={(v) => setCfg((p) => ({ ...p, citations_style: v as any }))}
+                    onValueChange={(v) =>
+                      setCfg((p) => ({ ...p, citations_style: v as any }))
+                    }
                   >
                     <SelectTrigger>
                       <SelectValue />
@@ -1027,11 +1077,14 @@ export default function CreateContentPage() {
                 </div>
 
                 <div className="rounded-xl border border-border bg-muted/30 p-3 text-[12px]">
-                  <pre className="whitespace-pre-wrap">{JSON.stringify(cfg, null, 2)}</pre>
+                  <pre className="whitespace-pre-wrap">
+                    {JSON.stringify(cfg, null, 2)}
+                  </pre>
                 </div>
 
                 <div className="text-[11px] text-muted-foreground">
-                  This JSON is sent as <code>config_json</code> to backend <code>/seo/jobs</code>.
+                  This JSON is sent as <code>config_json</code> to backend via{" "}
+                  <code>{API.createJob}</code>.
                 </div>
               </div>
             </CardContent>
