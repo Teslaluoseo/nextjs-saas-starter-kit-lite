@@ -1,18 +1,28 @@
 import { NextRequest, NextResponse } from 'next/server';
 
+/**
+ * 强制 Node.js Runtime
+ * 防止 Edge Runtime 读不到 env
+ */
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
+/**
+ * dev 模式用户（绕过 Clerk）
+ */
 const DEV_USER_ID = process.env.DEV_USER_ID?.trim() || 'dev';
 
+/**
+ * 读取并规范化 API_BASE_URL
+ */
 function getApiBaseUrl() {
   const v = process.env.API_BASE_URL?.trim();
   return v && v.length > 0 ? v.replace(/\/+$/, '') : null;
 }
 
 /**
- * ✅ 调试用：检查 Vercel 是否读到 API_BASE_URL
- * 打开：/api/seo/jobs
+ * 调试接口
+ * 打开 /api/seo/jobs
  */
 export async function GET() {
   return NextResponse.json({
@@ -23,9 +33,7 @@ export async function GET() {
 }
 
 /**
- * ✅ 上传 Excel → 创建任务
- * 前端上传字段通常是 file
- * 后端要求字段是 excel + config_json
+ * 上传 Excel → 创建 SEO Job
  */
 export async function POST(req: NextRequest) {
   const API_BASE_URL = getApiBaseUrl();
@@ -37,10 +45,12 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  // 1) 读取前端上传的 formData
+  /**
+   * 1️⃣ 读取前端上传的 form-data
+   */
   const incoming = await req.formData();
 
-  // 兼容：前端可能叫 file 或 excel
+  // 兼容字段名：file / excel
   const file = incoming.get('file') ?? incoming.get('excel');
 
   if (!(file instanceof File)) {
@@ -53,42 +63,75 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  // 2) 组装后端要求的字段：excel + config_json
+  /**
+   * 2️⃣ 构造后端需要的 FormData
+   */
   const upstream = new FormData();
 
-  // ✅ FastAPI 要求字段名是 excel
+  // FastAPI 必须字段：excel
   upstream.set('excel', file, file.name);
 
-  // ✅ FastAPI 要求 config_json 必填
-  // 先给一个“最小配置”，让你先跑通。后面你想加更多参数，再扩展这个 JSON
+  /**
+   * 3️⃣ 一次性补齐最常见 config_json 字段（防 KeyError）
+   * 后端不需要的字段会自动忽略
+   */
   const defaultConfig = {
-    // 你可以在后端用这个字段决定用哪个模型
-    model: process.env.DEFAULT_MODEL || 'openrouter',
+    // ===== 核心控制 =====
+    kind: 'seo_generate',
 
-    // 允许你后续扩展：是否启用 tavily / rephrasy / hive 等
+    // ===== 语言 / 地区（你这次报错缺的就是 language）=====
+    language: 'en',
+    country: 'US',
+
+    // ===== 模型相关 =====
+    model_provider: 'openrouter',
+    model: process.env.DEFAULT_MODEL || 'openrouter',
+    temperature: 0.7,
+
+    // ===== SEO 内容参数 =====
+    niche: 'general',
+    tone: 'professional',
+    audience: 'general',
+    max_words: 1200,
+
+    // ===== 工具开关（你提到的 Hive / Tavily / Rephrasy）=====
     use_tavily: true,
     use_rephrasy: false,
     use_hive: true,
 
-    // 并发/批量参数（后端支持的话就用）
+    // ===== 执行控制 =====
     concurrency: 1,
+    dry_run: false,
+
+    // ===== 输出控制 =====
+    output_format: 'markdown',
+    include_images: false,
+    include_schema: true,
+
+    // ===== 预留字段（后端若用得到）=====
+    site_url: '',
+    brand_name: '',
   };
 
   upstream.set('config_json', JSON.stringify(defaultConfig));
 
-  // 3) 转发给 Railway FastAPI
+  /**
+   * 4️⃣ 转发请求到 Railway FastAPI
+   */
   const r = await fetch(`${API_BASE_URL}/seo/jobs`, {
     method: 'POST',
     body: upstream,
     headers: {
-      // ✅ dev 模式绕过 Clerk
+      // dev 模式绕过 Clerk
       'X-User-Id': DEV_USER_ID,
     },
   });
 
   const text = await r.text();
 
-  // 4) 原样透传后端返回，方便你在页面里看到真实错误
+  /**
+   * 5️⃣ 原样返回后端结果（方便你在前端看到真实错误/进度）
+   */
   return new NextResponse(text, {
     status: r.status,
     headers: {
