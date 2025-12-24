@@ -41,9 +41,6 @@
       "sharp",
       "core-js-pure",
       "unrs-resolver"
-    ],
-    "ignoredBuiltDependencies": [
-      "core-js-pure"
     ]
   },
   "devDependencies": {
