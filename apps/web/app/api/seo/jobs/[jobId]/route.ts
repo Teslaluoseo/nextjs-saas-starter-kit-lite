@@ -1,29 +1,40 @@
-import { NextResponse } from 'next/server';
+import { NextResponse } from "next/server";
+import { auth } from "@clerk/nextjs/server";
 
-function getTarget() {
-  const t = process.env.API_PROXY_TARGET?.trim();
-  if (!t) throw new Error('Missing API_PROXY_TARGET in env');
-  return t.replace(/\/+$/, '');
+export const runtime = "nodejs";
+
+function mustGetBackendUrl() {
+  const url = process.env.BACKEND_URL;
+  if (!url) {
+    throw new Error("Missing env BACKEND_URL (must be https://...)");
+  }
+  return url.replace(/\/+$/, "");
 }
 
 export async function GET(
   _req: Request,
-  { params }: { params: { jobId: string } }
+  ctx: { params: { jobId: string } }
 ) {
-  const target = getTarget();
-  const url = `${target}/seo/jobs/${encodeURIComponent(params.jobId)}`;
+  const backend = mustGetBackendUrl();
 
-  const r = await fetch(url, { method: 'GET', cache: 'no-store' });
-  const buf = await r.arrayBuffer();
+  const { userId, getToken } = auth();
+  const token = await getToken();
 
-  return new NextResponse(buf, {
-    status: r.status,
+  const headers: Record<string, string> = {};
+  if (token) headers["Authorization"] = `Bearer ${token}`;
+  if (userId) headers["X-User-Id"] = userId;
+
+  const resp = await fetch(`${backend}/seo/jobs/${ctx.params.jobId}`, {
+    method: "GET",
+    headers,
+    cache: "no-store",
+  });
+
+  const text = await resp.text();
+  return new NextResponse(text, {
+    status: resp.status,
     headers: {
-      'content-type': r.headers.get('content-type') ?? 'application/json',
+      "Content-Type": resp.headers.get("Content-Type") || "application/json",
     },
   });
-}
-
-export async function OPTIONS() {
-  return NextResponse.json({}, { status: 200 });
 }
