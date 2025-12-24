@@ -3,49 +3,62 @@ import { auth } from "@clerk/nextjs/server";
 
 export const runtime = "nodejs";
 
-function mustGetBackendUrl() {
-  const url = process.env.BACKEND_URL;
+function getBackendUrlSafe() {
+  const raw = process.env.BACKEND_URL || "";
+  const url = raw.trim().replace(/\/+$/, "");
+
   if (!url) {
-    throw new Error("Missing env BACKEND_URL (must be https://...)");
+    return { ok: false as const, error: "Missing env BACKEND_URL" };
   }
-  return url.replace(/\/+$/, "");
+  if (!/^https:\/\/.+/i.test(url)) {
+    return { ok: false as const, error: `BACKEND_URL must start with https://, got: ${raw}` };
+  }
+  return { ok: true as const, url };
 }
 
 export async function POST(req: Request) {
-  const backend = mustGetBackendUrl();
+  try {
+    const backend = getBackendUrlSafe();
+    if (!backend.ok) {
+      return NextResponse.json(
+        { ok: false, where: "api/seo/jobs", error: backend.error },
+        { status: 500 }
+      );
+    }
 
-  // Clerk auth
-  const { userId, getToken } = auth();
-  const token = await getToken();
+    const { userId, getToken } = auth();
+    const token = await getToken().catch(() => null);
 
-  // Forward multipart 그대로
-  const formData = await req.formData();
+    const formData = await req.formData();
 
-  // ✅ 如果后端支持 Clerk JWT：走 Authorization
-  // ✅ 如果你后端还没接 Clerk：也可以先用 X-User-Id（临时）
-  const headers: Record<string, string> = {};
-  if (token) headers["Authorization"] = `Bearer ${token}`;
-  if (userId) headers["X-User-Id"] = userId;
+    const headers: Record<string, string> = {};
+    if (token) headers["Authorization"] = `Bearer ${token}`;
+    if (userId) headers["X-User-Id"] = userId;
 
-  const resp = await fetch(`${backend}/seo/jobs`, {
-    method: "POST",
-    headers,
-    body: formData,
-    cache: "no-store",
-  });
+    const resp = await fetch(`${backend.url}/seo/jobs`, {
+      method: "POST",
+      headers,
+      body: formData,
+      cache: "no-store",
+      redirect: "follow",
+    });
 
-  const text = await resp.text();
-  return new NextResponse(text, {
-    status: resp.status,
-    headers: {
-      "Content-Type": resp.headers.get("Content-Type") || "application/json",
-    },
-  });
-}
+    const contentType = resp.headers.get("Content-Type") || "application/json";
+    const text = await resp.text();
 
-export async function GET() {
-  return NextResponse.json(
-    { ok: false, message: "Use POST /api/seo/jobs or GET /api/seo/jobs/{jobId}" },
-    { status: 405 }
-  );
+    return new NextResponse(text, {
+      status: resp.status,
+      headers: { "Content-Type": contentType, "Cache-Control": "no-store" },
+    });
+  } catch (e: any) {
+    return NextResponse.json(
+      {
+        ok: false,
+        where: "api/seo/jobs",
+        error: String(e?.message ?? e),
+        stack: e?.stack ?? null,
+      },
+      { status: 500 }
+    );
+  }
 }
