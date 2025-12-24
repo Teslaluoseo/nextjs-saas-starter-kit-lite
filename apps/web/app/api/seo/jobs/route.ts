@@ -1,43 +1,51 @@
-import { NextResponse } from 'next/server';
+import { NextResponse } from "next/server";
+import { auth } from "@clerk/nextjs/server";
 
-function getTarget() {
-  const t = process.env.API_PROXY_TARGET?.trim();
-  if (!t) throw new Error('Missing API_PROXY_TARGET in env');
-  return t.replace(/\/+$/, '');
+export const runtime = "nodejs";
+
+function mustGetBackendUrl() {
+  const url = process.env.BACKEND_URL;
+  if (!url) {
+    throw new Error("Missing env BACKEND_URL (must be https://...)");
+  }
+  return url.replace(/\/+$/, "");
 }
 
 export async function POST(req: Request) {
-  const target = getTarget();
-  const url = `${target}/seo/jobs`;
+  const backend = mustGetBackendUrl();
 
-  const r = await fetch(url, {
-    method: 'POST',
-    headers: {
-      // ✅ 透传 content-type（multipart/form-data 会自动带 boundary）
-      ...(req.headers.get('content-type')
-        ? { 'content-type': req.headers.get('content-type') as string }
-        : {}),
-      // ✅ 如果你后端需要鉴权 token / user id，可以继续在这里加
-      ...(req.headers.get('authorization')
-        ? { authorization: req.headers.get('authorization') as string }
-        : {}),
-      ...(req.headers.get('x-user-id')
-        ? { 'x-user-id': req.headers.get('x-user-id') as string }
-        : {}),
-    },
-    body: await req.arrayBuffer(),
+  // Clerk auth
+  const { userId, getToken } = auth();
+  const token = await getToken();
+
+  // Forward multipart 그대로
+  const formData = await req.formData();
+
+  // ✅ 如果后端支持 Clerk JWT：走 Authorization
+  // ✅ 如果你后端还没接 Clerk：也可以先用 X-User-Id（临时）
+  const headers: Record<string, string> = {};
+  if (token) headers["Authorization"] = `Bearer ${token}`;
+  if (userId) headers["X-User-Id"] = userId;
+
+  const resp = await fetch(`${backend}/seo/jobs`, {
+    method: "POST",
+    headers,
+    body: formData,
+    cache: "no-store",
   });
 
-  const buf = await r.arrayBuffer();
-  return new NextResponse(buf, {
-    status: r.status,
+  const text = await resp.text();
+  return new NextResponse(text, {
+    status: resp.status,
     headers: {
-      'content-type': r.headers.get('content-type') ?? 'application/json',
+      "Content-Type": resp.headers.get("Content-Type") || "application/json",
     },
   });
 }
 
-export async function OPTIONS() {
-  // ✅ 解决浏览器预检（即使同源一般也不会触发，但保险）
-  return NextResponse.json({}, { status: 200 });
+export async function GET() {
+  return NextResponse.json(
+    { ok: false, message: "Use POST /api/seo/jobs or GET /api/seo/jobs/{jobId}" },
+    { status: 405 }
+  );
 }
