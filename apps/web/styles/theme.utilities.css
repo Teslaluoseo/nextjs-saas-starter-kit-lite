@@ -1,5 +1,67 @@
-@utility container {
-  margin-inline: auto;
+/* Force Light = white background, Dark = black background */
+/* This works with your theme.css mapping: --color-background -> --background */
 
-  @apply xl:max-w-[80rem] px-8;
+:root {
+  --background: 0 0% 100%;
+  --foreground: 0 0% 10%;
+
+  --card: 0 0% 100%;
+  --card-foreground: 0 0% 10%;
+
+  --popover: 0 0% 100%;
+  --popover-foreground: 0 0% 10%;
+
+  --muted: 0 0% 96%;
+  --muted-foreground: 0 0% 45%;
+
+  --border: 0 0% 90%;
+  --input: 0 0% 90%;
+
+  /* 主色（按钮）你不想动也可以；我给一个偏蓝紫的 */
+  --primary: 243 75% 59%;
+  --primary-foreground: 0 0% 100%;
+
+  --secondary: 0 0% 96%;
+  --secondary-foreground: 0 0% 10%;
+
+  --accent: 0 0% 96%;
+  --accent-foreground: 0 0% 10%;
+
+  --destructive: 0 84% 60%;
+  --destructive-foreground: 0 0% 100%;
+
+  --ring: 243 75% 59%;
+
+  --radius: 14px;
+}
+
+.dark {
+  --background: 0 0% 0%;
+  --foreground: 0 0% 96%;
+
+  --card: 0 0% 7%;
+  --card-foreground: 0 0% 96%;
+
+  --popover: 0 0% 7%;
+  --popover-foreground: 0 0% 96%;
+
+  --muted: 0 0% 10%;
+  --muted-foreground: 0 0% 65%;
+
+  --border: 0 0% 18%;
+  --input: 0 0% 18%;
+
+  --primary: 243 75% 59%;
+  --primary-foreground: 0 0% 100%;
+
+  --secondary: 0 0% 12%;
+  --secondary-foreground: 0 0% 96%;
+
+  --accent: 0 0% 12%;
+  --accent-foreground: 0 0% 96%;
+
+  --destructive: 0 63% 45%;
+  --destructive-foreground: 0 0% 100%;
+
+  --ring: 243 75% 59%;
 }
