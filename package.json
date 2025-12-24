@@ -37,6 +37,11 @@
     "overrides": {
       "react-is": "19.0.0"
     },
+    "onlyBuiltDependencies": [
+      "sharp",
+      "core-js-pure",
+      "unrs-resolver"
+    ],
     "ignoredBuiltDependencies": [
       "core-js-pure"
     ]
@@ -49,8 +54,4 @@
     "turbo": "2.5.8",
     "typescript": "^5.9.3"
   }
-  "pnpm": {
-  "onlyBuiltDependencies": ["sharp", "core-js-pure", "unrs-resolver"]
-  }
-
 }
