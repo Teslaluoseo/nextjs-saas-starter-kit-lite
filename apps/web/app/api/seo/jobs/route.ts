@@ -194,7 +194,7 @@ export async function POST(req: NextRequest) {
   upstream.set('excel', file, file.name);
   upstream.set('config_json', JSON.stringify(finalConfig));
 
-  const r = await fetch(`${API_BASE_URL}/seo/jobs`, {
+  const r = await fetch('/api/seo/jobs', {
     method: 'POST',
     body: upstream,
     headers: {
