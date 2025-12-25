@@ -1,5 +1,4 @@
 import { NextResponse } from 'next/server';
-import { auth } from '@clerk/nextjs/server';
 
 export const runtime = 'nodejs';
 
@@ -14,9 +13,6 @@ function getApiBaseUrl() {
     throw new Error(
       "Missing API_BASE_URL. Set Vercel env: API_BASE_URL='https://api.blogpostaboutai.com'"
     );
-  }
-  if (!url.startsWith('https://') && process.env.NODE_ENV === 'production') {
-    throw new Error(`API_BASE_URL must be https in production. Got: ${url}`);
   }
   return url;
 }
@@ -36,37 +32,41 @@ function jsonError(where: string, err: unknown, status = 500) {
 
 /**
  * GET /api/seo/jobs/:jobId
- * Proxy to: GET ${API_BASE_URL}/seo/jobs/:jobId
+ * Proxy -> GET ${API_BASE_URL}/seo/jobs/:jobId
  */
 export async function GET(
-  _req: Request,
+  req: Request,
   ctx: { params: Promise<{ jobId: string }> }
 ) {
   try {
     const API_BASE_URL = getApiBaseUrl();
     const { jobId } = await ctx.params;
 
-    const { getToken } = auth();
-    const token = await getToken().catch(() => null);
+    const authHeader = req.headers.get('authorization') || '';
+    const xUserId = req.headers.get('x-user-id') || '';
 
     const upstream = await fetch(`${API_BASE_URL}/seo/jobs/${encodeURIComponent(jobId)}`, {
       method: 'GET',
       headers: {
-        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        ...(authHeader ? { Authorization: authHeader } : {}),
+        ...(xUserId ? { 'X-User-Id': xUserId } : {}),
       },
       cache: 'no-store',
     });
 
-    const contentType = upstream.headers.get('content-type') || '';
+    const ct = upstream.headers.get('content-type') || '';
     const status = upstream.status;
 
-    if (contentType.includes('application/json')) {
+    if (ct.includes('application/json')) {
       const data = await upstream.json().catch(() => null);
       return NextResponse.json(data ?? { ok: false, error: 'Invalid JSON from upstream' }, { status });
-    } else {
-      const text = await upstream.text().catch(() => '');
-      return new NextResponse(text, { status, headers: { 'content-type': contentType || 'text/plain' } });
     }
+
+    const text = await upstream.text().catch(() => '');
+    return new NextResponse(text, {
+      status,
+      headers: { 'content-type': ct || 'text/plain' },
+    });
   } catch (err) {
     return jsonError('api/seo/jobs/[jobId]:GET', err, 500);
   }
