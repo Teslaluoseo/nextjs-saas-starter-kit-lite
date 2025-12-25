@@ -1,5 +1,4 @@
 import { NextResponse } from 'next/server';
-import { auth } from '@clerk/nextjs/server';
 
 export const runtime = 'nodejs';
 
@@ -14,9 +13,6 @@ function getApiBaseUrl() {
     throw new Error(
       "Missing API_BASE_URL. Set Vercel env: API_BASE_URL='https://api.blogpostaboutai.com'"
     );
-  }
-  if (!url.startsWith('https://') && process.env.NODE_ENV === 'production') {
-    throw new Error(`API_BASE_URL must be https in production. Got: ${url}`);
   }
   return url;
 }
@@ -36,24 +32,24 @@ function jsonError(where: string, err: unknown, status = 500) {
 
 /**
  * GET /api/seo/jobs/:jobId/download
- * Proxy to: GET ${API_BASE_URL}/seo/jobs/:jobId/download
- * Returns xlsx stream
+ * Proxy -> GET ${API_BASE_URL}/seo/jobs/:jobId/download
  */
 export async function GET(
-  _req: Request,
+  req: Request,
   ctx: { params: Promise<{ jobId: string }> }
 ) {
   try {
     const API_BASE_URL = getApiBaseUrl();
     const { jobId } = await ctx.params;
 
-    const { getToken } = auth();
-    const token = await getToken().catch(() => null);
+    const authHeader = req.headers.get('authorization') || '';
+    const xUserId = req.headers.get('x-user-id') || '';
 
     const upstream = await fetch(`${API_BASE_URL}/seo/jobs/${encodeURIComponent(jobId)}/download`, {
       method: 'GET',
       headers: {
-        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        ...(authHeader ? { Authorization: authHeader } : {}),
+        ...(xUserId ? { 'X-User-Id': xUserId } : {}),
       },
       cache: 'no-store',
     });
@@ -71,8 +67,7 @@ export async function GET(
       upstream.headers.get('content-type') ||
       'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
 
-    // 让浏览器以附件下载
-    const filename =
+    const cd =
       upstream.headers.get('content-disposition') ||
       `attachment; filename="seo_result_${jobId}.xlsx"`;
 
@@ -80,7 +75,7 @@ export async function GET(
       status: 200,
       headers: {
         'content-type': contentType,
-        'content-disposition': filename,
+        'content-disposition': cd,
         'cache-control': 'no-store',
       },
     });
