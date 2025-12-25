@@ -1,56 +1,40 @@
 {
-  "$schema": "https://turborepo.org/schema.json",
-  "globalDependencies": ["**/.env"],
+  "$schema": "https://turbo.build/schema.json",
   "ui": "stream",
+  "globalDependencies": ["**/.env.*", "**/.env"],
   "globalEnv": [
-    "NEXT_PUBLIC_PRODUCT_NAME",
-    "NEXT_PUBLIC_SITE_URL",
-    "LOGGER",
-    "CAPTCHA_SECRET_TOKEN",
-    "API_BASE_URL",
-    "API_PROXY_TARGET",
+    "NODE_ENV",
 
-    "NEXT_PUBLIC_BACKEND_URL",
-    "NEXT_PUBLIC_SUPABASE_URL",
-    "NEXT_PUBLIC_SUPABASE_ANON_KEY",
     "NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY",
-
     "CLERK_SECRET_KEY",
-    "SUPABASE_SERVICE_ROLE_KEY",
-    "SUPABASE_PROJECT_REF"
+    "CLERK_JWT_TEMPLATE",
+
+    "NEXT_PUBLIC_CLERK_SIGN_IN_URL",
+    "NEXT_PUBLIC_CLERK_SIGN_UP_URL",
+    "NEXT_PUBLIC_CLERK_AFTER_SIGN_IN_URL",
+    "NEXT_PUBLIC_CLERK_AFTER_SIGN_UP_URL",
+
+    "NEXT_PUBLIC_APP_NAME",
+
+    "BACKEND_URL",
+    "NEXT_PUBLIC_BACKEND_URL",
+
+    "API_PROXY_TARGET"
   ],
   "tasks": {
-    "topo": {
-      "dependsOn": ["^topo"]
-    },
     "build": {
       "dependsOn": ["^build"],
-      "outputs": [".next/**", "!.next/cache/**", "next-env.d.ts"]
+      "outputs": [".next/**", "dist/**"]
     },
     "dev": {
-      "persistent": true,
-      "cache": false
-    },
-    "format": {
-      "outputs": ["node_modules/.cache/.prettiercache"],
-      "outputLogs": "new-only"
+      "cache": false,
+      "persistent": true
     },
     "lint": {
-      "dependsOn": ["^topo"],
-      "outputs": ["node_modules/.cache/.eslintcache"]
-    },
-    "typecheck": {
-      "dependsOn": ["^topo"],
-      "outputs": ["node_modules/.cache/tsbuildinfo.json"]
+      "dependsOn": ["^lint"]
     },
     "test": {
-      "dependsOn": ["^topo"]
-    },
-    "clean": {
-      "cache": false
-    },
-    "license#dev": {
-      "outputLogs": "errors-only"
+      "dependsOn": ["^test"]
     }
   }
 }
